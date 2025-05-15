@@ -79,7 +79,10 @@ print("DEBUG: Registered handle_name_change handler")
 # Додаємо логування для всіх обробників
 print("DEBUG: All handlers registered:")
 for handler in application.handlers[0]:
-    print(f"DEBUG: Handler: {handler.callback.__name__} with pattern: {handler.pattern}")
+    if hasattr(handler, 'pattern'):
+        print(f"DEBUG: Handler: {handler.callback.__name__} with pattern: {handler.pattern}")
+    else:
+        print(f"DEBUG: Handler: {handler.callback.__name__} (CommandHandler)")
 
 # Запускаємо бота
 if __name__ == '__main__':
