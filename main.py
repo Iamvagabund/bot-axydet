@@ -42,7 +42,7 @@ application.add_handler(CallbackQueryHandler(admin_handlers.add_training_type, p
 application.add_handler(CallbackQueryHandler(admin_handlers.save_training, pattern="^add_type_"))
 
 # Перегляд і редагування тренувань
-application.add_handler(CallbackQueryHandler(admin_handlers.view_training, pattern="^view_training_"))
+application.add_handler(CallbackQueryHandler(admin_handlers.view_existing_training, pattern="^view_training_"))
 application.add_handler(CallbackQueryHandler(admin_handlers.view_day_trainings, pattern="^view_trainings_"))
 application.add_handler(CallbackQueryHandler(admin_handlers.edit_existing_training, pattern="^edit_existing_training_"))
 application.add_handler(CallbackQueryHandler(admin_handlers.change_training_type, pattern="^change_type_"))
