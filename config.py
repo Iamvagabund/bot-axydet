@@ -4,13 +4,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Telegram Bot Token
-TELEGRAM_TOKEN = "8199714639:AAGphA17RHFHIutHTzB3xQ6-wuhvhDtekRM"
+TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 
-# Admin IDs
-ADMIN_IDS = [396869465]  # Замініть на ваш Telegram ID
-
-# Group Chat ID
-GROUP_CHAT_ID = -4757435492
+ADMIN_IDS = [int(id) for id in os.getenv('ADMIN_IDS', '').split(',')]
+GROUP_CHAT_ID = int(os.getenv('GROUP_CHAT_ID'))
 
 # Training Types
 TRAINING_TYPES = [
