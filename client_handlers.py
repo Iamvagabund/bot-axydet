@@ -1,35 +1,64 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes
+from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters
+from telegram.ext.filters import Command
 from datetime import datetime, timedelta
-from database import *
+from database import (
+    get_or_create_user, get_user_by_telegram_id, get_trainings_by_date,
+    get_training_participants, get_user_training_registration, get_user_by_id,
+    get_all_users, update_user_paid_trainings, update_user_expires_at, add_training,
+    get_training_by_id
+)
 from config import ADMIN_IDS
 from utils import format_date
 from sqlalchemy.orm import Session
 from database import User, Session
+import sqlalchemy
 import sqlite3
 import traceback
 
-__all__ = [
-    'start',
-    'show_client_menu',
-    'show_week_schedule',
-    'show_day_trainings',
-    'show_training_details',
-    'handle_register_for_training',
-    'cancel_registration',
-    'show_my_trainings',
-    'show_register_menu',
-    'show_profile',
-    'start_change_name',
-    'handle_name_change'
-]
+def is_admin(user_id: int) -> bool:
+    """Проверяет, является ли пользователь администратором"""
+    return user_id in ADMIN_IDS
+
+async def add_training_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды добавления тренировок"""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ У вас нет прав для выполнения этой команды")
+        return
+        
+    # Получаем ID пользователя из сообщения
+    try:
+        _, telegram_id, amount = update.message.text.split()
+        telegram_id = int(telegram_id)
+        amount = int(amount)
+    except ValueError:
+        await update.message.reply_text("❌ Неверный формат. Используйте: /add_training ID КОЛИЧЕСТВО")
+        return
+        
+    # Проверяем существование пользователя
+    user = get_user_by_telegram_id(telegram_id)
+    if not user:
+        await update.message.reply_text("❌ Пользователь не найден")
+        return
+        
+    # Добавляем тренировки
+    if not add_training(telegram_id, amount):
+        await update.message.reply_text(
+            f"❌ Не удалось добавить тренировки. У пользователя уже есть действующий абонемент:\n"
+            f"• Количество тренировок: {user.paid_trainings}\n"
+            f"• Действует до: {user.expires_at.strftime('%d.%m.%Y') if user.expires_at else 'без срока действия'}\n\n"
+            f"Сначала нужно использовать все тренировки из текущего абонемента."
+        )
+        return
+        
+    # Получаем обновленные данные пользователя
+    user = get_user_by_telegram_id(telegram_id)
+    await update.message.reply_text(
+        f"✅ Добавлено {amount} тренировок пользователю {user.display_name}\n"
+        f"📅 Действует до: {user.expires_at.strftime('%d.%m.%Y')}"
+    )
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = get_or_create_user(
-        update.effective_user.id,
-        update.effective_user.full_name
-    )
-    
     if update.effective_user.id in ADMIN_IDS:
         keyboard = [
             [InlineKeyboardButton("🔐 Адмін-панель", callback_data="admin_menu")],
@@ -41,19 +70,54 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=reply_markup
         )
     else:
-        await show_client_menu(update, context)
+        keyboard = [[InlineKeyboardButton("🚀 Почати", callback_data="client_menu")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(
+            "👋 *Вітаємо в фітнес-студії АХУДЄТЬ!*\n\n"
+            "🏋️‍♂️ *Наші переваги:*\n"
+            "• Професійні тренери\n"
+            "• Сучасне обладнання\n"
+            "• Індивідуальний підхід\n"
+            "• Зручний розклад\n\n"
+            "🎯 *Для початку роботи натисніть кнопку 'Почати'*",
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
 
 async def show_client_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = get_user_by_telegram_id(update.effective_user.id)
+    # Создаем пользователя только когда он нажимает "Почати" или если это админ
+    user = get_or_create_user(
+        update.effective_user.id,
+        update.effective_user.full_name
+    )
+    
     keyboard = [
         [InlineKeyboardButton("📅 Розклад на тиждень", callback_data="client_schedule")],
         [InlineKeyboardButton("📝 Записатися на тренування", callback_data="client_register")],
-        [InlineKeyboardButton("❌ Скасувати тренування", callback_data="client_cancel")]
+        [InlineKeyboardButton("❌ Скасувати тренування", callback_data="client_cancel")],
+        [InlineKeyboardButton("👤 Мій профіль", callback_data="test_profile")]
     ]
+    
+    # Если это админ, добавляем кнопку возврата в админ-панель
+    if update.effective_user.id in ADMIN_IDS:
+        keyboard.append([InlineKeyboardButton("🔐 Повернутися до адмін-панелі", callback_data="admin_menu")])
+    
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     text = f"👋 *Вітаємо, {user.display_name}!*\n\n"
-    text += f"💰 *Залишок тренувань:* {user.paid_trainings}\n\n"
+    
+    # Показываем информацию о тренировках для всех пользователей
+    if user.paid_trainings > 0:
+        text += f"💰 *У вас оплачених тренувань у кількості - {user.paid_trainings}*\n"
+        if user.expires_at:
+            text += f"📅 *Дійсні до:* {user.expires_at.strftime('%d.%m.%Y')}\n\n"
+        text += "Ви можете записатися на тренування через меню 'Записатися на тренування'\n\n"
+    else:
+        text += "❌ *У вас немає оплачених тренувань*\n\n"
+        text += "Щоб оплатити тренування, ви можете:\n"
+        text += "1️⃣ Натиснути 'Мій профіль' та обрати опцію оплати\n"
+        text += "2️⃣ Якщо виникли складнощі, зверніться до адміністратора\n\n"
+    
     text += "🎯 *Оберіть дію:*"
     
     if update.callback_query:
@@ -61,13 +125,12 @@ async def show_client_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
 
-async def show_week_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def show_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
     today = datetime.now().date()
     monday = today - timedelta(days=today.weekday())
-    user = get_user_by_telegram_id(update.effective_user.id)
     
     # Збираємо всі тренування на два тижні
     trainings_by_day = {}
@@ -82,15 +145,15 @@ async def show_week_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE)
         keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="client_menu")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text(
-            "😔 *На жаль, тренування ще не додані.*\n"
+            "😔 Тренування ще не додані.\n"
             "Спробуйте пізніше.",
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
+            reply_markup=reply_markup
         )
         return
     
     # Формуємо текст розкладу
-    text = "🏋️‍♂️ *Розклад тренувань на тиждень:*\n\n"
+    text = "🏋️‍♂️ Розклад тренувань на тиждень:\n\n"
+    keyboard = []
     
     for date, trainings in sorted(trainings_by_day.items()):
         weekday = date.strftime('%A')
@@ -108,13 +171,19 @@ async def show_week_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE)
         text += f"*{weekday_ua}*\n"
         for training in sorted(trainings, key=lambda x: x.time):
             participants = get_training_participants(training.id)
-            # Перевіряємо чи користувач вже записаний
-            is_registered = any(reg.user_id == user.id for reg in participants)
-            checkmark = "✅ " if is_registered else ""
-            text += f"  {checkmark}{training.time} - {training.type} ({len(participants)} записів)\n"
+            max_slots = 1 if training.type == "Персональне тренування" else 3
+            text += f"  {training.time} - {training.type} ({len(participants)}/{max_slots} записів)\n"
         text += "\n"
+        
+        # Додаємо кнопку для запису на тренування цього дня
+        keyboard.append([
+            InlineKeyboardButton(
+                f"📝 Записатися на {format_date(date)}",
+                callback_data=f"register_day_{date.strftime('%Y-%m-%d')}"
+            )
+        ])
     
-    keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="client_menu")]]
+    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="client_menu")])
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
@@ -211,7 +280,8 @@ async def show_training_details(update: Update, context: ContextTypes.DEFAULT_TY
         keyboard.append([InlineKeyboardButton("✅ Записатися", callback_data=f"register_{training_id}")])
     
     keyboard.append([InlineKeyboardButton("🔄 Оновити", callback_data=f"client_training_{training_id}")])
-    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data=f"client_day_{training.date.strftime('%Y-%m-%d')}")])
+    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data=f"client_day_{training.date.strftime('%Y-%m-%d')}")]
+    )
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
@@ -461,8 +531,8 @@ async def show_register_menu(update: Update, context: ContextTypes.DEFAULT_TYPE)
         keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="client_menu")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text(
-            "❌ *У вас немає оплачених тренувань.*\n"
-            "Зверніться до [@yurivynnyk](https://t.me/yurivynnyk) для поповнення.",
+            "❌ *У вас немає оплачених тренувань*\n\n"
+            "Але ви можете записатися на індивідуальні заняття",
             reply_markup=reply_markup,
             parse_mode='Markdown'
         )
@@ -531,39 +601,41 @@ async def show_register_menu(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
 
 async def show_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    print("DEBUG: ==========================================")
-    print("DEBUG: show_profile called")
-    print("DEBUG: update =", update)
-    print("DEBUG: context =", context)
-    print("DEBUG: ==========================================")
-    try:
-        query = update.callback_query
-        print(f"DEBUG: callback_data = {query.data}")
-        await query.answer()
-        
-        user = get_user_by_telegram_id(update.effective_user.id)
-        print(f"DEBUG: User found: {user.display_name}")
-        
-        text = f"👤 *Особистий кабінет*\n\n"
-        text += f"👋 *{user.display_name}*\n"
-        text += f"💰 *Залишок тренувань:* {user.paid_trainings}\n\n"
-        
-        keyboard = [
-            [InlineKeyboardButton("✏️ Змінити ім'я", callback_data="change_name")],
-            [InlineKeyboardButton("◀️ Назад", callback_data="client_menu")]
-        ]
-        
+    query = update.callback_query
+    await query.answer()
+    
+    user = get_user_by_telegram_id(update.effective_user.id)
+    
+    text = f"👤 *Профіль*\n\n"
+    text += f"*Ім'я:* {user.display_name}\n"
+    
+    if user.paid_trainings > 0:
+        text += f"💰 *Залишок тренувань:* {user.paid_trainings}\n"
+        if user.expires_at:
+            text += f"📅 *Дійсні до:* {user.expires_at.strftime('%d.%m.%Y')}\n"
+    else:
+        text += "❌ *У вас немає активних тренувань*\n"
         if update.effective_user.id in ADMIN_IDS:
-            keyboard.append([InlineKeyboardButton("🔐 Повернутися до адмін-панелі", callback_data="admin_menu")])
-        
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        print("DEBUG: Sending message")
-        await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
-        print("DEBUG: Message sent")
-    except Exception as e:
-        print(f"ERROR in show_profile: {str(e)}")
-        raise e
+            text += "\n*Оберіть опцію оплати:*\n"
+            text += "1️⃣ Абонемент на 8 тренувань\n"
+            text += "2️⃣ Абонемент на 4 тренування\n"
+            text += "3️⃣ Оплата одного тренування\n"
+    
+    keyboard = [
+        [InlineKeyboardButton("✏️ Змінити ім'я", callback_data="change_name")]
+    ]
+    
+    if update.effective_user.id in ADMIN_IDS and user.paid_trainings <= 0:
+        keyboard.extend([
+            [InlineKeyboardButton("💳 Абонемент на 8 тренувань", callback_data="buy_8_trainings")],
+            [InlineKeyboardButton("💳 Абонемент на 4 тренування", callback_data="buy_4_trainings")],
+            [InlineKeyboardButton("💳 Оплата одного тренування", callback_data="buy_1_training")]
+        ])
+    
+    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="client_menu")])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
 
 async def start_change_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Implementation of start_change_name function
@@ -655,4 +727,141 @@ async def handle_name_change(update: Update, context: ContextTypes.DEFAULT_TYPE)
     except Exception as e:
         print(f"ERROR in handle_name_change: {e}")
         print(f"ERROR traceback: {traceback.format_exc()}")
-        await update.message.reply_text("❌ Помилка при зміні імені. Спробуйте ще раз.") 
+        await update.message.reply_text("❌ Помилка при зміні імені. Спробуйте ще раз.")
+
+async def handle_buy_trainings(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    user = get_user_by_telegram_id(update.effective_user.id)
+    if not user:
+        return
+    
+    action = query.data
+    # Устанавливаем время на конец дня через ровно месяц
+    now = datetime.now()
+    if now.month == 12:
+        expires_at = datetime(now.year + 1, 1, now.day, 23, 59, 59)
+    else:
+        expires_at = datetime(now.year, now.month + 1, now.day, 23, 59, 59)
+    
+    if action == "buy_8_trainings":
+        user.paid_trainings += 8
+        user.expires_at = expires_at
+        update_user_paid_trainings(user.id, 8)
+        update_user_expires_at(user.id, expires_at)
+        text = "✅ *Додано 8 тренувань до вашого балансу*\n"
+        text += f"📅 *Дійсні до:* {expires_at.strftime('%d.%m.%Y')}"
+    elif action == "buy_4_trainings":
+        user.paid_trainings += 4
+        user.expires_at = expires_at
+        update_user_paid_trainings(user.id, 4)
+        update_user_expires_at(user.id, expires_at)
+        text = "✅ *Додано 4 тренування до вашого балансу*\n"
+        text += f"📅 *Дійсні до:* {expires_at.strftime('%d.%m.%Y')}"
+    elif action == "buy_1_training":
+        user.paid_trainings += 1
+        user.expires_at = expires_at
+        update_user_paid_trainings(user.id, 1)
+        update_user_expires_at(user.id, expires_at)
+        text = "✅ *Додано 1 тренування до вашого балансу*\n"
+        text += f"📅 *Дійсні до:* {expires_at.strftime('%d.%m.%Y')}"
+    
+    keyboard = [[InlineKeyboardButton("◀️ Назад до профілю", callback_data="test_profile")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+
+async def show_admin_users_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    users = get_all_users()
+    text = "👥 *Керування користувачами*\n\n"
+    text += "Оберіть користувача для керування:\n\n"
+    
+    keyboard = []
+    for user in users:
+        # Форматируем информацию о пользователе
+        user_info = f"👤 {user.display_name}"
+        if user.paid_trainings > 0:
+            user_info += f" - {user.paid_trainings} тренувань"
+            if user.expires_at:
+                user_info += f" (до {user.expires_at.strftime('%d.%m.%Y')})"
+        else:
+            user_info += " - немає тренувань"
+            
+        keyboard.append([
+            InlineKeyboardButton(
+                user_info,
+                callback_data=f"admin_user_{user.id}"
+            )
+        ])
+    
+    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="admin_menu")])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+
+async def show_admin_user_actions(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = int(query.data.split('_')[2])
+    user = get_user_by_id(user_id)
+    
+    text = f"👤 *Керування користувачем:* {user.display_name}\n\n"
+    text += f"💰 *Залишок тренувань:* {user.paid_trainings}\n\n"
+    
+    text += "*Оберіть дію:*\n"
+    text += "1️⃣ Додати абонемент на 8 тренувань\n"
+    text += "2️⃣ Додати абонемент на 4 тренування\n"
+    text += "3️⃣ Додати одне тренування\n"
+    text += "4️⃣ Додати персональне тренування\n"
+    
+    keyboard = [
+        [InlineKeyboardButton("💳 Додати 8 тренувань", callback_data=f"admin_add_8_{user.id}")],
+        [InlineKeyboardButton("💳 Додати 4 тренування", callback_data=f"admin_add_4_{user.id}")],
+        [InlineKeyboardButton("💳 Додати 1 тренування", callback_data=f"admin_add_1_{user.id}")],
+        [InlineKeyboardButton("💳 Додати персональне тренування", callback_data=f"admin_add_personal_{user.id}")],
+        [InlineKeyboardButton("◀️ Назад", callback_data="admin_users")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+
+async def handle_admin_add_trainings(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    _, _, action, user_id = query.data.split('_')
+    user = get_user_by_id(int(user_id))
+    
+    if action == "8":
+        amount = 8
+    elif action == "4":
+        amount = 4
+    elif action == "personal":
+        amount = 1  # Персональное тренировка тоже считается как 1 тренировка
+    else:
+        amount = 1
+        
+    # Добавляем тренировки через add_training
+    if not add_training(user.telegram_id, amount):
+        await query.edit_message_text(
+            f"❌ Не удалось добавить тренировки. У пользователя уже есть действующий абонемент:\n"
+            f"• Количество тренировок: {user.paid_trainings}\n"
+            f"• Действует до: {user.expires_at.strftime('%d.%m.%Y') if user.expires_at else 'без срока действия'}\n\n"
+            f"Сначала нужно использовать все тренировки из текущего абонемента.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="admin_users")]])
+        )
+        return
+        
+    # Получаем обновленные данные пользователя
+    user = get_user_by_id(int(user_id))
+    training_type = "персональне тренування" if action == "personal" else f"{amount} тренувань"
+    await query.edit_message_text(
+        f"✅ Добавлено {training_type} пользователю {user.display_name}\n"
+        f"📅 Действует до: {user.expires_at.strftime('%d.%m.%Y')}",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="admin_users")]])
+    ) 

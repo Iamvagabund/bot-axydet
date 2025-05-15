@@ -84,7 +84,8 @@ async def show_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"*{weekday_ua}*\n"
         for training in sorted(trainings, key=lambda x: x.time):
             participants = get_training_participants(training.id)
-            text += f"  {training.time} {training.type} ({len(participants)} записів)\n"
+            max_slots = 1 if training.type == "Персональне тренування" else 3
+            text += f"  {training.time} - {training.type} ({len(participants)}/{max_slots} записів)\n"
         text += "\n"
         
         # Додаємо кнопку для редагування тренувань цього дня
@@ -212,33 +213,41 @@ async def save_training(update: Update, context: ContextTypes.DEFAULT_TYPE):
     date = datetime.strptime(context.user_data['training_date'], '%Y-%m-%d')
     time = context.user_data['training_time']
     
-    training = add_training(date, time, training_type)
-    
-    weekday = date.strftime('%A')
-    weekday_ua = {
-        'Monday': 'Понеділок',
-        'Tuesday': 'Вівторок',
-        'Wednesday': 'Середа',
-        'Thursday': 'Четвер',
-        'Friday': "П'ятниця",
-        'Saturday': 'Субота',
-        'Sunday': 'Неділя'
-    }[weekday]
-    
-    keyboard = [
-        [InlineKeyboardButton("➕ Додати ще тренування", callback_data="admin_add_training")],
-        [InlineKeyboardButton("◀️ Назад до адмін-меню", callback_data="admin_menu")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    text = (
-        f"✅ Тренування успішно додано!\n\n"
-        f"📅 Дата: {format_date(date)} ({weekday_ua})\n"
-        f"⏰ Час: {time}\n"
-        f"🏋️‍♂️ Тип: {training_type}"
-    )
-    
-    await query.edit_message_text(text, reply_markup=reply_markup)
+    try:
+        training = create_training(date, time, training_type)
+        
+        weekday = date.strftime('%A')
+        weekday_ua = {
+            'Monday': 'Понеділок',
+            'Tuesday': 'Вівторок',
+            'Wednesday': 'Середа',
+            'Thursday': 'Четвер',
+            'Friday': "П'ятниця",
+            'Saturday': 'Субота',
+            'Sunday': 'Неділя'
+        }[weekday]
+        
+        keyboard = [
+            [InlineKeyboardButton("➕ Додати ще тренування", callback_data="admin_add_training")],
+            [InlineKeyboardButton("◀️ Назад до адмін-меню", callback_data="admin_menu")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        text = (
+            f"✅ Тренування успішно додано!\n\n"
+            f"📅 Дата: {format_date(date)} ({weekday_ua})\n"
+            f"⏰ Час: {time}\n"
+            f"🏋️‍♂️ Тип: {training_type}"
+        )
+        
+        await query.edit_message_text(text, reply_markup=reply_markup)
+    except Exception as e:
+        keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="admin_add_training")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(
+            f"❌ Помилка при додаванні тренування: {str(e)}",
+            reply_markup=reply_markup
+        )
 
 async def edit_training_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -541,33 +550,54 @@ async def add_paid_trainings(update: Update, context: ContextTypes.DEFAULT_TYPE)
     query = update.callback_query
     await query.answer()
     
-    parts = query.data.split('_')
-    amount = int(parts[2])
-    user_id = int(parts[3])
+    user_id = int(query.data.split('_')[3])
+    user = get_user_by_id(user_id)
+    
+    keyboard = [
+        [InlineKeyboardButton("8 тренувань (абонемент)", callback_data=f"add_package_{user_id}_8")],
+        [InlineKeyboardButton("4 тренування (абонемент)", callback_data=f"add_package_{user_id}_4")],
+        [InlineKeyboardButton("1 тренування", callback_data=f"add_package_{user_id}_1")],
+        [InlineKeyboardButton("◀️ Назад", callback_data=f"user_management_{user_id}")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    text = f"👤 *Користувач:* {user.display_name}\n"
+    text += f"💰 *Поточний баланс:* {user.paid_trainings}\n\n"
+    text += "🎯 *Виберіть пакет тренувань:*"
+    
+    await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+
+async def handle_add_package(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    _, user_id, package_size = query.data.split('_')
+    user_id = int(user_id)
+    package_size = int(package_size)
     
     user = get_user_by_id(user_id)
-    if user:
-        user.paid_trainings += amount
-        session = Session()
-        session.merge(user)
-        session.commit()
-        session.close()
-        
-        keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data=f"user_{user_id}")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text(
-            f"✅ Додано {amount} тренувань!\n\n"
-            f"Користувач: {user.display_name}\n"
-            f"Оплачені тренування: {user.paid_trainings}",
-            reply_markup=reply_markup
-        )
-    else:
-        keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="admin_users")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text(
-            "❌ Користувача не знайдено",
-            reply_markup=reply_markup
-        )
+    
+    # Устанавливаем срок действия абонемента (30 дней для пакетов 4 и 8)
+    expires_at = None
+    if package_size in [4, 8]:
+        expires_at = datetime.now() + timedelta(days=30)
+    
+    # Обновляем количество тренировок и срок действия
+    update_user_paid_trainings(user_id, package_size, expires_at)
+    
+    # Обновляем информацию о пользователе
+    user = get_user_by_id(user_id)
+    
+    text = f"✅ *Пакет додано!*\n\n"
+    text += f"👤 *Користувач:* {user.display_name}\n"
+    text += f"💰 *Новий баланс:* {user.paid_trainings}\n"
+    if user.expires_at:
+        text += f"📅 *Дійсні до:* {user.expires_at.strftime('%d.%m.%Y')}\n"
+    
+    keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data=f"user_management_{user_id}")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
 
 async def change_name_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query

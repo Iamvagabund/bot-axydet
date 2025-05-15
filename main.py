@@ -6,6 +6,8 @@ print("DEBUG: Importing client_handlers...")
 import client_handlers
 print("DEBUG: Importing logging...")
 import logging
+from telegram import BotCommand
+from telegram.error import TimedOut, NetworkError, Conflict
 
 # Налаштовуємо логування
 logging.basicConfig(
@@ -22,8 +24,24 @@ async def error_handler(update, context):
             "Виникла помилка. Спробуйте ще раз або зверніться до адміністратора."
         )
 
-# Створюємо бота
-application = Application.builder().token(TELEGRAM_TOKEN).build()
+# Налаштовуємо меню команд
+async def setup_commands():
+    commands = [
+        BotCommand("start", "Запустити бота"),
+        BotCommand("admin", "Адмін-панель"),
+    ]
+    await application.bot.set_my_commands(commands)
+
+# Створюємо бота з налаштуваннями
+application = (
+    Application.builder()
+    .token(TELEGRAM_TOKEN)
+    .read_timeout(30)
+    .write_timeout(30)
+    .connect_timeout(30)
+    .pool_timeout(30)
+    .build()
+)
 
 # Додаємо обробник помилок
 application.add_error_handler(error_handler)
@@ -35,6 +53,13 @@ application.add_handler(CallbackQueryHandler(admin_handlers.show_schedule, patte
 application.add_handler(CallbackQueryHandler(admin_handlers.add_training_menu, pattern="^admin_add_training$"))
 application.add_handler(CallbackQueryHandler(admin_handlers.edit_training_menu, pattern="^admin_edit_training$"))
 application.add_handler(CallbackQueryHandler(admin_handlers.show_users, pattern="^admin_users$"))
+
+# Управление пользователями
+application.add_handler(CallbackQueryHandler(admin_handlers.user_management, pattern="^user_management_"))
+application.add_handler(CallbackQueryHandler(admin_handlers.add_paid_trainings, pattern="^add_paid_trainings_"))
+application.add_handler(CallbackQueryHandler(admin_handlers.handle_add_package, pattern="^add_package_"))
+application.add_handler(CallbackQueryHandler(admin_handlers.change_name_start, pattern="^change_name_start_"))
+application.add_handler(CallbackQueryHandler(admin_handlers.change_name, pattern="^change_name_"))
 
 # Додавання тренування
 application.add_handler(CallbackQueryHandler(admin_handlers.add_training_time, pattern="^add_training_"))
@@ -87,4 +112,9 @@ for handler in application.handlers[0]:
 # Запускаємо бота
 if __name__ == '__main__':
     logger.info("Starting bot...")
-    application.run_polling() 
+    # Налаштовуємо команди перед запуском
+    application.create_task(setup_commands())
+    application.run_polling(
+        allowed_updates=Update.ALL_TYPES,
+        drop_pending_updates=True
+    ) 

@@ -1,6 +1,31 @@
 from sqlalchemy.orm import sessionmaker, joinedload
 from models import engine, User, Training, TrainingRegistration
 from datetime import datetime, timedelta
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ContextTypes
+
+__all__ = [
+    'get_or_create_user',
+    'add_training',
+    'get_trainings_by_date',
+    'register_for_training',
+    'cancel_registration',
+    'get_user_registrations',
+    'update_user_paid_trainings',
+    'update_user_display_name',
+    'get_all_users',
+    'get_training_participants',
+    'delete_training',
+    'get_training_by_id',
+    'get_user_by_id',
+    'get_user_by_telegram_id',
+    'get_user_training_registration',
+    'delete_user_by_display_name',
+    'reset_all_users_trainings',
+    'update_user_expires_at',
+    'create_training',
+    'save_training'
+]
 
 Session = sessionmaker(bind=engine)
 
@@ -8,19 +33,43 @@ def get_or_create_user(telegram_id, display_name):
     session = Session()
     user = session.query(User).filter_by(telegram_id=telegram_id).first()
     if not user:
-        user = User(telegram_id=telegram_id, display_name=display_name)
+        user = User(
+            telegram_id=telegram_id, 
+            display_name=display_name,
+            paid_trainings=0,
+            expires_at=None
+        )
         session.add(user)
         session.commit()
     session.close()
     return user
 
-def add_training(date, time, type):
+def add_training(telegram_id: int, amount: int = 1) -> bool:
+    """Добавляет тренировки пользователю"""
     session = Session()
-    training = Training(date=date, time=time, type=type)
-    session.add(training)
-    session.commit()
-    session.close()
-    return training
+    try:
+        user = session.query(User).filter_by(telegram_id=telegram_id).first()
+        if not user:
+            return False
+            
+        # Проверяем, есть ли у пользователя активные тренировки
+        if user.paid_trainings > 0:
+            return False
+            
+        # Устанавливаем количество тренировок и дату истечения
+        user.paid_trainings = amount
+        
+        # Устанавливаем дату истечения (конец дня через ровно месяц)
+        now = datetime.utcnow()
+        if now.month == 12:
+            user.expires_at = datetime(now.year + 1, 1, now.day, 23, 59, 59)
+        else:
+            user.expires_at = datetime(now.year, now.month + 1, now.day, 23, 59, 59)
+            
+        session.commit()
+        return True
+    finally:
+        session.close()
 
 def get_trainings_by_date(date):
     session = Session()
@@ -34,12 +83,39 @@ def get_trainings_by_date(date):
 def register_for_training(user_id, training_id):
     session = Session()
     try:
-        # Перевіряємо чи користувач вже записаний
+        # Отримуємо тренування
+        training = session.query(Training).get(training_id)
+        if not training:
+            return None
+            
+        # Для персонального тренування не перевіряємо оплачені тренування
+        if training.type != "Персональне тренування":
+            # Перевіряємо чи є у користувача активні тренування
+            user = session.query(User).get(user_id)
+            if not user or user.paid_trainings <= 0:
+                return None
+                
+            # Перевіряємо чи не істек абонемент
+            if user.expires_at and user.expires_at < datetime.utcnow():
+                user.paid_trainings = 0
+                session.commit()
+                return None
+                
+            # Зменшуємо кількість тренувань
+            user.paid_trainings -= 1
+            
+        # Перевіряємо чи не записаний вже
         existing_reg = get_user_training_registration(user_id, training_id)
         if existing_reg:
             return None
             
-        # Створюємо нову реєстрацію
+        # Перевіряємо кількість учасників
+        current_participants = get_training_participants(training_id)
+        max_participants = 1 if training.type == "Персональне тренування" else 3
+        if len(current_participants) >= max_participants:
+            return None
+            
+        # Створюємо реєстрацію
         registration = TrainingRegistration(user_id=user_id, training_id=training_id)
         session.add(registration)
         session.commit()
@@ -56,6 +132,10 @@ def cancel_registration(registration_id):
             registration = session.query(TrainingRegistration).get(registration_id)
             if registration:
                 registration.is_cancelled = True
+                # Возвращаем тренировку пользователю
+                user = session.query(User).get(registration.user_id)
+                if user:
+                    user.paid_trainings += 1
                 session.commit()
                 return registration
             return None
@@ -72,11 +152,32 @@ def get_user_registrations(user_id):
             ).all()
         return registrations
 
-def update_user_paid_trainings(user_id, amount):
+def update_user_paid_trainings(user_id, package_type):
+    """
+    Добавляет тренировки пользователю в зависимости от типа пакета
+    package_type: 1 - 8 тренировок, 2 - 4 тренировки, 3 - 1 тренировка
+    """
     session = Session()
     user = session.query(User).get(user_id)
     if user:
-        user.paid_trainings += amount
+        # Проверяем есть ли активные тренировки
+        if user.paid_trainings > 0:
+            return None  # Нельзя купить новый пакет пока есть активные тренировки
+            
+        # Устанавливаем количество тренировок и дату истечения
+        if package_type == 1:
+            user.paid_trainings = 8
+        elif package_type == 2:
+            user.paid_trainings = 4
+        else:
+            user.paid_trainings = 1
+            
+        # Устанавливаем дату истечения (конец дня через ровно месяц)
+        now = datetime.utcnow()
+        if now.month == 12:
+            user.expires_at = datetime(now.year + 1, 1, now.day, 23, 59, 59)
+        else:
+            user.expires_at = datetime(now.year, now.month + 1, now.day, 23, 59, 59)
         session.commit()
     session.close()
     return user
@@ -99,12 +200,21 @@ def get_all_users():
 def get_training_participants(training_id):
     session = Session()
     try:
+        training = session.query(Training).get(training_id)
+        if not training:
+            return []
+            
         registrations = session.query(TrainingRegistration)\
             .filter(
                 TrainingRegistration.training_id == training_id,
                 TrainingRegistration.is_cancelled == False
             ).all()
-        return registrations
+            
+        # Для персонального тренування максимум 1 учасник
+        if training.type == "Персональне тренування":
+            return registrations[:1]
+        # Для інших типів максимум 3 учасники
+        return registrations[:3]
     finally:
         session.close()
 
@@ -133,25 +243,8 @@ def get_user_by_id(user_id):
     return user
 
 def get_user_by_telegram_id(telegram_id: int) -> User:
-    print(f"DEBUG: get_user_by_telegram_id called with telegram_id={telegram_id}")  # Додаємо логування
-    session = Session()
-    try:
-        user = session.query(User).filter(User.telegram_id == telegram_id).first()
-        print(f"DEBUG: User found: {user.display_name if user else 'None'}")  # Додаємо логування
-        if not user:
-            print("DEBUG: User not found, creating new user")  # Додаємо логування
-            user = User(
-                telegram_id=telegram_id,
-                display_name=f"User {telegram_id}",
-                paid_trainings=0
-            )
-            session.add(user)
-            session.commit()
-            print(f"DEBUG: New user created: {user.display_name}")  # Додаємо логування
-        return user
-    finally:
-        session.close()
-        print("DEBUG: Session closed")  # Додаємо логування
+    print(f"DEBUG: get_user_by_telegram_id called with telegram_id={telegram_id}")
+    return get_or_create_user(telegram_id, f"User {telegram_id}")
 
 def get_user_training_registration(user_id, training_id):
     session = Session()
@@ -187,4 +280,87 @@ def delete_user_by_display_name(display_name):
         session.rollback()
         return False
     finally:
-        session.close() 
+        session.close()
+
+def reset_all_users_trainings():
+    session = Session()
+    try:
+        # Обновляем всех пользователей
+        users = session.query(User).all()
+        for user in users:
+            user.paid_trainings = 0
+            user.expires_at = None
+        session.commit()
+        print(f"DEBUG: Reset trainings for {len(users)} users")
+        return True
+    except Exception as e:
+        print(f"ERROR resetting trainings: {e}")
+        session.rollback()
+        return False
+    finally:
+        session.close()
+
+def update_user_expires_at(user_id: int, expires_at: datetime) -> None:
+    """Оновлює дату закінчення тренувань користувача"""
+    session = Session()
+    try:
+        user = session.query(User).filter(User.id == user_id).first()
+        if user:
+            user.expires_at = expires_at
+            session.commit()
+    finally:
+        session.close()
+
+def create_training(date, time, training_type):
+    """Добавляет тренировку в расписание"""
+    session = Session()
+    try:
+        training = Training(
+            date=date,
+            time=time,
+            type=training_type
+        )
+        session.add(training)
+        session.commit()
+        return training
+    except Exception as e:
+        session.rollback()
+        raise e
+    finally:
+        session.close()
+
+async def save_training(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    training_type = query.data.split('_')[2]
+    date = datetime.strptime(context.user_data['training_date'], '%Y-%m-%d')
+    time = context.user_data['training_time']
+    
+    training = create_training(date, time, training_type)
+    
+    weekday = date.strftime('%A')
+    weekday_ua = {
+        'Monday': 'Понеділок',
+        'Tuesday': 'Вівторок',
+        'Wednesday': 'Середа',
+        'Thursday': 'Четвер',
+        'Friday': "П'ятниця",
+        'Saturday': 'Субота',
+        'Sunday': 'Неділя'
+    }[weekday]
+    
+    keyboard = [
+        [InlineKeyboardButton("➕ Додати ще тренування", callback_data="admin_add_training")],
+        [InlineKeyboardButton("◀️ Назад до адмін-меню", callback_data="admin_menu")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    text = (
+        f"✅ Тренування успішно додано!\n\n"
+        f"📅 Дата: {format_date(date)} ({weekday_ua})\n"
+        f"⏰ Час: {time}\n"
+        f"🏋️‍♂️ Тип: {training_type}"
+    )
+    
+    await query.edit_message_text(text, reply_markup=reply_markup) 

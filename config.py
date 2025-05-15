@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Telegram Bot Token
-TELEGRAM_TOKEN = "7669832528:AAGteaJ2OrH2Jv5PNyPBEE3XD-tbZ7pV3xI"
+TELEGRAM_TOKEN = "8199714639:AAGphA17RHFHIutHTzB3xQ6-wuhvhDtekRM"
 
 # Admin IDs
 ADMIN_IDS = [396869465]  # Замініть на ваш Telegram ID
@@ -24,7 +24,8 @@ TRAINING_TYPES = [
     "HIIT",
     "Step aerobic",
     "Outdoor training",
-    "Functional training"
+    "Functional training",
+    "Персональне тренування"
 ]
 
 # Налаштування бази даних

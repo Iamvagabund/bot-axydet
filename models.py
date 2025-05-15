@@ -13,7 +13,8 @@ class User(Base):
     id = Column(Integer, primary_key=True)
     telegram_id = Column(Integer, unique=True)
     display_name = Column(String)
-    paid_trainings = Column(Integer, default=0)
+    paid_trainings = Column(Integer, default=0)  # Количество оставшихся тренировок
+    expires_at = Column(DateTime, nullable=True)  # Дата истечения абонемента
     created_at = Column(DateTime, default=datetime.utcnow)
     
     registrations = relationship("TrainingRegistration", back_populates="user")
