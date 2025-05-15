@@ -3,9 +3,6 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Config
-config.py
-
 # Environment
 .env
 venv/
