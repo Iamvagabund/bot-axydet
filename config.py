@@ -3,12 +3,18 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Telegram Bot Token
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
+if not TELEGRAM_TOKEN:
+    raise ValueError("TELEGRAM_TOKEN is not set")
 
-ADMIN_IDS = [int(id) for id in os.getenv('ADMIN_IDS', '').split(',') if id.strip()]
+admin_ids_str = os.getenv('ADMIN_IDS', '')
+ADMIN_IDS = [int(id) for id in admin_ids_str.split(',') if id.strip()]
 
-GROUP_CHAT_ID = int(os.getenv('GROUP_CHAT_ID'))
+group_chat_id_str = os.getenv('GROUP_CHAT_ID')
+if group_chat_id_str:
+    GROUP_CHAT_ID = int(group_chat_id_str)
+else:
+    GROUP_CHAT_ID = None
 
 # Training Types
 TRAINING_TYPES = [
