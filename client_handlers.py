@@ -155,7 +155,7 @@ async def show_day_trainings(update: Update, context: ContextTypes.DEFAULT_TYPE)
             callback_data=f"client_training_{training.id}"
         )])
     
-    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="client_schedule")])
+    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="client_register")])
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(text, reply_markup=reply_markup)
 
