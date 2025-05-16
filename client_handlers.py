@@ -104,7 +104,12 @@ async def show_client_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    text = f"👋 *Вітаємо, {user.display_name}!*\n\n"
+    text = f"👋 *Вітаємо в фітнес-студії АХУДЄТЬ, {user.display_name}!*\n\n"
+    text += f"🏋️‍♂️ *Наші переваги:*\n"
+    text += "• Професійні тренери\n"
+    text += "• Сучасне обладнання\n"
+    text += "• Індивідуальний підхід\n"
+    text += "• Зручний розклад\n\n"
     
     # Показываем информацию о тренировках для всех пользователей
     if user.paid_trainings > 0:
@@ -113,7 +118,8 @@ async def show_client_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text += f"📅 *Дійсні до:* {user.expires_at.strftime('%d.%m.%Y')}\n\n"
         text += "Ви можете записатися на тренування через меню 'Записатися на тренування'\n\n"
     else:
-        text += "❌ *У вас немає оплачених тренувань*\n\n"
+        text += "❌ *У вас немає оплачених тренувань*\n"
+        text += "Але ви можете записатися на індивідуальні заняття\n\n"
         text += "Щоб оплатити тренування, ви можете:\n"
         text += "1️⃣ Натиснути 'Мій профіль' та обрати опцію оплати\n"
         text += "2️⃣ Якщо виникли складнощі, зверніться до адміністратора\n\n"
@@ -171,7 +177,7 @@ async def show_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"*{weekday_ua}*\n"
         for training in sorted(trainings, key=lambda x: x.time):
             participants = get_training_participants(training.id)
-            max_slots = 1 if training.type == "Персональне тренування" else 3
+            max_slots = 1 if training.type == "Персональне тренування" else 2
             is_registered = get_user_training_registration(user.id, training.id) is not None
             checkmark = "✅" if is_registered else ""
             text += f"  {training.time} - {training.type} ({len(participants)}/{max_slots}) {checkmark}\n"
@@ -210,7 +216,7 @@ async def show_day_trainings(update: Update, context: ContextTypes.DEFAULT_TYPE)
     keyboard = []
     for training in sorted(trainings, key=lambda x: x.time):
         participants = get_training_participants(training.id)
-        max_slots = 1 if training.type == "Персональне тренування" else 3
+        max_slots = 1 if training.type == "Персональне тренування" else 2
         is_registered = get_user_training_registration(user.id, training.id) is not None
         checkmark = "✅" if is_registered else ""
         text += f"⏰ *{training.time}* - {training.type} ({len(participants)}/{max_slots}) {checkmark}\n"
@@ -233,10 +239,10 @@ async def show_training_details(update: Update, context: ContextTypes.DEFAULT_TY
     await query.answer()
     
     # Отримуємо training_id з різних форматів callback_data
-    if query.data.startswith('client_training_'):
-        training_id = int(query.data.split('_')[2])
-    else:  # для register_ та cancel_reg_
+    if query.data.startswith('training_'):
         training_id = int(query.data.split('_')[1])
+    else:  # для client_training_
+        training_id = int(query.data.split('_')[2])
     
     training = get_training_by_id(training_id)
     participants = get_training_participants(training_id)
@@ -253,15 +259,20 @@ async def show_training_details(update: Update, context: ContextTypes.DEFAULT_TY
         'Sunday': 'Неділя'
     }[weekday]
     
-    text = f"💰 *Залишок тренувань:* {user.paid_trainings}\n\n"
-    text += f"🏋️‍♂️ *Тренування*\n\n"
-    text += f"📅 *{format_date(training.date)}*\n"
+    text = f"🏋️ *Тренування*\n"
+    
+    # Показуємо залишок тренувань тільки для групових тренувань
+    if training.type != "Персональне тренування":
+        text += f"💰 *Залишок тренувань:* {user.paid_trainings}\n"
+    
+    text += f"\n📅 *{format_date(training.date)}*\n"
     text += f"*{weekday_ua}*\n"
     text += f"⏰ *{training.time}*\n"
-    text += f"*{training.type}*\n"
-    max_slots = 1 if training.type == "Персональне тренування" else 3
-    text += f"👥 *Записано:* {len(participants)}/{max_slots}\n\n"
-    text += f"👥 *Список учасників:*\n"
+    text += f"*{training.type}*\n\n"
+    
+    # Додаємо кількість учасників
+    max_slots = 1 if training.type == "Персональне тренування" else 2
+    text += f"👥 *Список учасників ({len(participants)}/{max_slots}):*\n"
     
     if participants:
         for reg in participants:
@@ -272,17 +283,19 @@ async def show_training_details(update: Update, context: ContextTypes.DEFAULT_TY
     else:
         text += "• Поки що немає записів\n"
     
-    keyboard = []
     # Перевіряємо чи користувач вже записаний
-    is_registered = get_user_training_registration(user.id, training_id) is not None
+    is_registered = any(reg.user_id == user.id for reg in participants)
     
+    keyboard = []
     if is_registered:
         keyboard.append([InlineKeyboardButton("❌ Скасувати запис", callback_data=f"cancel_reg_{training_id}")])
     else:
         keyboard.append([InlineKeyboardButton("✅ Записатися", callback_data=f"register_{training_id}")])
     
-    keyboard.append([InlineKeyboardButton("🔄 Оновити", callback_data=f"client_training_{training_id}")])
-    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data=f"client_day_{training.date.strftime('%Y-%m-%d')}")])
+    keyboard.extend([
+        [InlineKeyboardButton("🔄 Оновити", callback_data=f"client_training_{training_id}")],
+        [InlineKeyboardButton("◀️ Назад", callback_data=f"client_day_{training.date.strftime('%Y-%m-%d')}")]
+    ])
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
@@ -312,9 +325,9 @@ async def handle_register_for_training(update: Update, context: ContextTypes.DEF
     # Перевіряємо чи є оплачені тренування тільки для групових тренувань
     if training.type != "Персональне тренування" and user.paid_trainings <= 0:
         await query.edit_message_text(
-            "❌ *У вас немає оплачених тренувань.*\n"
-            "Зверніться до [@yurivynnyk](https://t.me/yurivynnyk) для поповнення.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="client_menu")]]),
+            "❌ *У вас немає оплачених тренувань*\n\n"
+            "Але ви можете записатися на індивідуальні заняття",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data=f"client_training_{training_id}")]]),
             parse_mode='Markdown'
         )
         return
@@ -331,7 +344,7 @@ async def handle_register_for_training(update: Update, context: ContextTypes.DEF
     
     # Перевіряємо чи є вільні місця
     participants = get_training_participants(training_id)
-    max_slots = 1 if training.type == "Персональне тренування" else 3
+    max_slots = 1 if training.type == "Персональне тренування" else 2
     if len(participants) >= max_slots:
         await query.edit_message_text(
             "❌ *На жаль, всі місця на це тренування вже зайняті.*",
@@ -362,12 +375,15 @@ async def handle_register_for_training(update: Update, context: ContextTypes.DEF
         text = f"✅ *Ви успішно записалися на тренування!*\n\n"
         if training.type != "Персональне тренування":
             text += f"💰 *Залишок тренувань:* {user.paid_trainings}\n\n"
-        text += f"🏋️‍♂️ *Тренування*\n\n"
+        text += f"🏋️ *Тренування*\n\n"
         text += f"📅 *{format_date(training.date)}*\n"
         text += f"*{weekday_ua}*\n"
         text += f"⏰ *{training.time}*\n"
         text += f"*{training.type}*\n\n"
-        text += f"👥 *Список учасників:*\n"
+        
+        # Додаємо кількість учасників
+        max_slots = 1 if training.type == "Персональне тренування" else 2
+        text += f"👥 *Список учасників ({len(participants)}/{max_slots}):*\n"
         
         if participants:
             for reg in participants:
@@ -425,8 +441,6 @@ async def cancel_registration(update: Update, context: ContextTypes.DEFAULT_TYPE
         # Викликаємо функцію з database.py
         from database import cancel_registration as db_cancel_registration
         db_cancel_registration(registration.id)
-        user.paid_trainings += 1
-        update_user_paid_trainings(user.id, 1)
         
         # Отримуємо оновлені дані
         training = get_training_by_id(training_id)
@@ -445,13 +459,17 @@ async def cancel_registration(update: Update, context: ContextTypes.DEFAULT_TYPE
         }[weekday]
         
         text = f"✅ *Ви успішно скасували запис на тренування!*\n\n"
-        text += f"💰 *Залишок тренувань:* {user.paid_trainings}\n\n"
-        text += f"🏋️‍♂️ *Тренування*\n\n"
+        if training.type != "Персональне тренування":
+            text += f"💰 *Залишок тренувань:* {user.paid_trainings}\n\n"
+        text += f"🏋️ *Тренування*\n\n"
         text += f"📅 *{format_date(training.date)}*\n"
         text += f"*{weekday_ua}*\n"
         text += f"⏰ *{training.time}*\n"
         text += f"*{training.type}*\n\n"
-        text += f"👥 *Список учасників:*\n"
+        
+        # Додаємо кількість учасників
+        max_slots = 1 if training.type == "Персональне тренування" else 2
+        text += f"👥 *Список учасників ({len(participants)}/{max_slots}):*\n"
         
         if participants:
             for reg in participants:
@@ -540,17 +558,6 @@ async def show_register_menu(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     user = get_user_by_telegram_id(update.effective_user.id)
     
-    if user.paid_trainings <= 0:
-        keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="client_menu")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text(
-            "❌ *У вас немає оплачених тренувань*\n\n"
-            "Але ви можете записатися на індивідуальні заняття",
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
-        )
-        return
-    
     today = datetime.now().date()
     monday = today - timedelta(days=today.weekday())
     
@@ -576,7 +583,13 @@ async def show_register_menu(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     # Формуємо текст меню
     text = f"📝 *Оберіть день для запису:*\n\n"
-    text += f"💰 *Залишок тренувань:* {user.paid_trainings}\n\n"
+    
+    # Показуємо баланс тільки якщо є оплачені тренування
+    if user.paid_trainings > 0:
+        text += f"💰 *Залишок тренувань:* {user.paid_trainings}\n\n"
+    else:
+        text += "❌ *У вас немає оплачених тренувань*\n"
+        text += "Але ви можете записатися на індивідуальні заняття\n\n"
     
     keyboard = []
     for date, trainings in sorted(trainings_by_day.items()):

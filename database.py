@@ -105,7 +105,7 @@ def register_for_training(user_id, training_id):
             
         # Перевіряємо кількість учасників
         current_participants = get_training_participants(training_id)
-        max_participants = 1 if training.type == "Персональне тренування" else 3
+        max_participants = 1 if training.type == "Персональне тренування" else 2
         if len(current_participants) >= max_participants:
             return None
             
@@ -194,25 +194,23 @@ def get_all_users():
     return users
 
 def get_training_participants(training_id):
-    session = Session()
-    try:
+    with Session() as session:
         training = session.query(Training).get(training_id)
         if not training:
             return []
-            
-        registrations = session.query(TrainingRegistration)\
-            .filter(
-                TrainingRegistration.training_id == training_id,
-                TrainingRegistration.is_cancelled == False
-            ).all()
-            
-        # Для персонального тренування максимум 1 учасник
-        if training.type == "Персональне тренування":
-            return registrations[:1]
-        # Для інших типів максимум 3 учасники
-        return registrations[:3]
-    finally:
-        session.close()
+        
+        # Отримуємо всі активні реєстрації для цього тренування
+        registrations = session.query(TrainingRegistration).filter(
+            TrainingRegistration.training_id == training_id,
+            TrainingRegistration.is_cancelled == False
+        ).all()
+        
+        # Перевіряємо чи не перевищено ліміт учасників
+        max_slots = 1 if training.type == "Персональне тренування" else 2
+        if len(registrations) >= max_slots:
+            return registrations[:max_slots]  # Повертаємо тільки перших max_slots учасників
+        
+        return registrations
 
 def delete_training(training_id):
     session = Session()
