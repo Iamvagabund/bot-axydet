@@ -1,8 +1,6 @@
-from sqlalchemy.orm import sessionmaker, joinedload
+from sqlalchemy.orm import sessionmaker
 from models import engine, User, Training, TrainingRegistration
 from datetime import datetime, timedelta
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes
 
 def format_date(date):
     return date.strftime('%d.%m.%Y')
@@ -27,7 +25,6 @@ __all__ = [
     'reset_all_users_trainings',
     'update_user_expires_at',
     'create_training',
-    'save_training',
     'format_date'
 ]
 
@@ -311,55 +308,10 @@ def update_user_expires_at(user_id: int, expires_at: datetime) -> None:
         session.close()
 
 def create_training(date, time, training_type):
-    """Добавляет тренировку в расписание"""
     session = Session()
-    try:
-        training = Training(
-            date=date,
-            time=time,
-            type=training_type
-        )
-        session.add(training)
-        session.commit()
-        return training
-    except Exception as e:
-        session.rollback()
-        raise e
-    finally:
-        session.close()
-
-async def save_training(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    training_type = query.data.split('_')[2]
-    date = datetime.strptime(context.user_data['training_date'], '%Y-%m-%d')
-    time = context.user_data['training_time']
-    
-    training = create_training(date, time, training_type)
-    
-    weekday = date.strftime('%A')
-    weekday_ua = {
-        'Monday': 'Понеділок',
-        'Tuesday': 'Вівторок',
-        'Wednesday': 'Середа',
-        'Thursday': 'Четвер',
-        'Friday': "П'ятниця",
-        'Saturday': 'Субота',
-        'Sunday': 'Неділя'
-    }[weekday]
-    
-    keyboard = [
-        [InlineKeyboardButton("➕ Додати ще тренування", callback_data="admin_add_training")],
-        [InlineKeyboardButton("◀️ Назад до адмін-меню", callback_data="admin_menu")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    text = (
-        f"✅ Тренування успішно додано!\n\n"
-        f"📅 Дата: {format_date(date)} ({weekday_ua})\n"
-        f"⏰ Час: {time}\n"
-        f"🏋️‍♂️ Тип: {training_type}"
-    )
-    
-    await query.edit_message_text(text, reply_markup=reply_markup) 
+    training = Training(date=date, time=time, type=training_type)
+    session.add(training)
+    session.commit()
+    session.refresh(training)
+    session.close()
+    return training 

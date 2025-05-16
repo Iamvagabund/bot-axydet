@@ -89,6 +89,7 @@ application.add_handler(CallbackQueryHandler(client_handlers.show_register_menu,
 application.add_handler(CallbackQueryHandler(client_handlers.show_my_trainings, pattern="^client_cancel$"))
 application.add_handler(CallbackQueryHandler(client_handlers.handle_register_for_training, pattern="^register_"))
 application.add_handler(CallbackQueryHandler(client_handlers.cancel_registration, pattern="^cancel_reg_"))
+application.add_handler(CallbackQueryHandler(client_handlers.show_training_details, pattern="^client_training_"))
 application.add_handler(CallbackQueryHandler(client_handlers.show_profile, pattern="^test_profile$"))
 application.add_handler(CallbackQueryHandler(client_handlers.start_change_name, pattern="^change_name$"))
 application.add_handler(CommandHandler("change_name", client_handlers.handle_name_change))
