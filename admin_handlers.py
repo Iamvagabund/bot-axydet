@@ -28,19 +28,9 @@ async def admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("Адмін-панель:", reply_markup=reply_markup)
 
-async def show_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def show_admin_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    
-    # Перевіряємо чи користувач адмін
-    if update.effective_user.id not in ADMIN_IDS:
-        keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="admin_menu")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text(
-            "❌ У вас немає доступу до цієї функції.",
-            reply_markup=reply_markup
-        )
-        return
     
     today = datetime.now().date()
     monday = today - timedelta(days=today.weekday())
@@ -59,7 +49,7 @@ async def show_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text(
             "😔 Тренування ще не додані.\n"
-            "Додайте тренування через меню адміністратора.",
+            "Спробуйте пізніше.",
             reply_markup=reply_markup
         )
         return
@@ -80,19 +70,19 @@ async def show_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'Sunday': 'Неділя'
         }[weekday]
         
-        text += f"📅 *{format_date(date)}*\n"
+        text += f"📅 *{date.strftime('%d.%m.%Y')}*\n"
         text += f"*{weekday_ua}*\n"
         for training in sorted(trainings, key=lambda x: x.time):
             participants = get_training_participants(training.id)
             max_slots = 1 if training.type == "Персональне тренування" else 3
             text += f"  {training.time} - {training.type} ({len(participants)}/{max_slots} записів)\n"
         text += "\n"
-        
+    
         # Додаємо кнопку для редагування тренувань цього дня
         keyboard.append([
             InlineKeyboardButton(
-                f"✏️ Редагувати {format_date(date)}",
-                callback_data=f"edit_day_{date.strftime('%Y-%m-%d')}"
+                f"✏️ Редагувати {date.strftime('%d.%m.%Y')}",
+                callback_data=f"admin_day_{date.strftime('%Y-%m-%d')}"
             )
         ])
     
@@ -328,7 +318,7 @@ async def edit_day_trainings(update: Update, context: ContextTypes.DEFAULT_TYPE)
         text = f"{format_date(date)} {training.time} - {training.type} ({len(participants)} осіб)"
         keyboard.append([InlineKeyboardButton(text, callback_data=f"edit_training_{training.id}")])
     
-    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="admin_edit_training")])
+    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="admin_menu")])
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(f"Виберіть тренування для редагування на {format_date(date)} ({weekday_ua}):", reply_markup=reply_markup)
 

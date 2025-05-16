@@ -4,6 +4,9 @@ from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
+def format_date(date):
+    return date.strftime('%d.%m.%Y')
+
 __all__ = [
     'get_or_create_user',
     'add_training',
@@ -24,7 +27,8 @@ __all__ = [
     'reset_all_users_trainings',
     'update_user_expires_at',
     'create_training',
-    'save_training'
+    'save_training',
+    'format_date'
 ]
 
 Session = sessionmaker(bind=engine)
@@ -51,21 +55,14 @@ def add_training(telegram_id: int, amount: int = 1) -> bool:
         user = session.query(User).filter_by(telegram_id=telegram_id).first()
         if not user:
             return False
-            
-        # Проверяем, есть ли у пользователя активные тренировки
         if user.paid_trainings > 0:
             return False
-            
-        # Устанавливаем количество тренировок и дату истечения
         user.paid_trainings = amount
-        
-        # Устанавливаем дату истечения (конец дня через ровно месяц)
         now = datetime.utcnow()
         if now.month == 12:
             user.expires_at = datetime(now.year + 1, 1, now.day, 23, 59, 59)
         else:
             user.expires_at = datetime(now.year, now.month + 1, now.day, 23, 59, 59)
-            
         session.commit()
         return True
     finally:
@@ -132,10 +129,12 @@ def cancel_registration(registration_id):
             registration = session.query(TrainingRegistration).get(registration_id)
             if registration:
                 registration.is_cancelled = True
-                # Возвращаем тренировку пользователю
-                user = session.query(User).get(registration.user_id)
-                if user:
-                    user.paid_trainings += 1
+                # Повертаємо тренування тільки якщо це не персональне тренування
+                training = session.query(Training).get(registration.training_id)
+                if training and training.type != "Персональне тренування":
+                    user = session.query(User).get(registration.user_id)
+                    if user:
+                        user.paid_trainings += 1
                 session.commit()
                 return registration
             return None
@@ -280,7 +279,7 @@ def delete_user_by_display_name(display_name):
         session.rollback()
         return False
     finally:
-        session.close()
+        session.close() 
 
 def reset_all_users_trainings():
     session = Session()

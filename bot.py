@@ -3,11 +3,28 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler
 from config import TELEGRAM_TOKEN, ADMIN_IDS
 from admin_handlers import (
-    admin_menu, show_schedule, show_day_schedule, add_training_menu,
-    add_training_time, add_training_type, save_training, edit_training_menu,
-    show_users, user_management, edit_day_trainings, edit_training, delete_training,
-    view_day_trainings, edit_existing_training, change_training_type, view_existing_training,
-    change_name_start, change_name, show_tomorrow_trainings
+    admin_menu,
+    show_admin_schedule,
+    show_day_schedule,
+    add_training_menu,
+    edit_training_menu,
+    show_users,
+    show_tomorrow_trainings,
+    user_management,
+    add_paid_trainings,
+    handle_add_package,
+    change_name_start,
+    change_name,
+    add_training_time,
+    add_training_type,
+    save_training,
+    view_existing_training,
+    view_day_trainings,
+    edit_existing_training,
+    change_training_type,
+    edit_day_trainings,
+    edit_training,
+    delete_training
 )
 from client_handlers import (
     start, show_client_menu, show_schedule, show_day_trainings,
@@ -36,7 +53,7 @@ def main():
 
     # Додаємо обробники callback-запитів для адміна
     application.add_handler(CallbackQueryHandler(admin_menu, pattern="^admin_menu$"))
-    application.add_handler(CallbackQueryHandler(show_schedule, pattern="^admin_schedule$"))
+    application.add_handler(CallbackQueryHandler(show_admin_schedule, pattern="^admin_schedule$"))
     application.add_handler(CallbackQueryHandler(show_day_schedule, pattern="^admin_day_"))
     application.add_handler(CallbackQueryHandler(add_training_menu, pattern="^admin_add_training$"))
     application.add_handler(CallbackQueryHandler(add_training_time, pattern="^add_training_"))

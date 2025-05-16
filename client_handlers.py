@@ -6,10 +6,10 @@ from database import (
     get_or_create_user, get_user_by_telegram_id, get_trainings_by_date,
     get_training_participants, get_user_training_registration, get_user_by_id,
     get_all_users, update_user_paid_trainings, update_user_expires_at, add_training,
-    get_training_by_id
+    get_training_by_id, format_date, register_for_training
 )
 from config import ADMIN_IDS
-from utils import format_date
+from utils import format_date as utils_format_date
 from sqlalchemy.orm import Session
 from database import User, Session
 import sqlalchemy
@@ -131,6 +131,7 @@ async def show_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     today = datetime.now().date()
     monday = today - timedelta(days=today.weekday())
+    user = get_user_by_telegram_id(update.effective_user.id)
     
     # Збираємо всі тренування на два тижні
     trainings_by_day = {}
@@ -153,7 +154,6 @@ async def show_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Формуємо текст розкладу
     text = "🏋️‍♂️ Розклад тренувань на тиждень:\n\n"
-    keyboard = []
     
     for date, trainings in sorted(trainings_by_day.items()):
         weekday = date.strftime('%A')
@@ -167,23 +167,17 @@ async def show_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'Sunday': 'Неділя'
         }[weekday]
         
-        text += f"📅 *{format_date(date)}*\n"
+        text += f"📅 *{date.strftime('%d.%m.%Y')}*\n"
         text += f"*{weekday_ua}*\n"
         for training in sorted(trainings, key=lambda x: x.time):
             participants = get_training_participants(training.id)
             max_slots = 1 if training.type == "Персональне тренування" else 3
-            text += f"  {training.time} - {training.type} ({len(participants)}/{max_slots} записів)\n"
+            is_registered = get_user_training_registration(user.id, training.id) is not None
+            checkmark = "✅" if is_registered else ""
+            text += f"  {training.time} - {training.type} ({len(participants)}/{max_slots}) {checkmark}\n"
         text += "\n"
-        
-        # Додаємо кнопку для запису на тренування цього дня
-        keyboard.append([
-            InlineKeyboardButton(
-                f"📝 Записатися на {format_date(date)}",
-                callback_data=f"register_day_{date.strftime('%Y-%m-%d')}"
-            )
-        ])
     
-    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="client_menu")])
+    keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="client_menu")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
@@ -208,25 +202,31 @@ async def show_day_trainings(update: Update, context: ContextTypes.DEFAULT_TYPE)
         'Sunday': 'Неділя'
     }[weekday]
     
-    text = f"📅 Тренування на {format_date(date)} ({weekday_ua}):\n\n"
-    
-    for training in sorted(trainings, key=lambda x: x.time):
-        participants = get_training_participants(training.id)
-        is_registered = any(reg.user_id == user.id for reg in participants)
-        checkmark = "✅ " if is_registered else ""
-        text += f"⏰ {checkmark}{training.time} - {training.type}\n"
-        text += f"👥 Зареєстровано: {len(participants)} осіб\n\n"
+    text = f"📝 *Оберіть час тренування:*\n\n"
+    text += f"💰 *Залишок тренувань:* {user.paid_trainings}\n\n"
+    text += f"📅 *{date.strftime('%d.%m.%Y')}*\n"
+    text += f"*{weekday_ua}*\n\n"
     
     keyboard = []
-    for training in trainings:
-        keyboard.append([InlineKeyboardButton(
-            f"✏️ {training.time} - {training.type}",
-            callback_data=f"client_training_{training.id}"
-        )])
+    for training in sorted(trainings, key=lambda x: x.time):
+        participants = get_training_participants(training.id)
+        max_slots = 1 if training.type == "Персональне тренування" else 3
+        is_registered = get_user_training_registration(user.id, training.id) is not None
+        checkmark = "✅" if is_registered else ""
+        text += f"⏰ *{training.time}* - {training.type} ({len(participants)}/{max_slots}) {checkmark}\n"
+        
+        # Додаємо кнопку часу
+        keyboard.append([
+            InlineKeyboardButton(
+                f"⏰ {training.time} - {training.type}",
+                callback_data=f"client_training_{training.id}"
+            )
+        ])
     
     keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="client_register")])
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text(text, reply_markup=reply_markup)
+    
+    await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
 
 async def show_training_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -253,12 +253,14 @@ async def show_training_details(update: Update, context: ContextTypes.DEFAULT_TY
         'Sunday': 'Неділя'
     }[weekday]
     
-    text = f"💰 Оплачені тренування: {user.paid_trainings}\n\n"
+    text = f"💰 *Залишок тренувань:* {user.paid_trainings}\n\n"
     text += f"🏋️‍♂️ *Тренування*\n\n"
     text += f"📅 *{format_date(training.date)}*\n"
     text += f"*{weekday_ua}*\n"
     text += f"⏰ *{training.time}*\n"
-    text += f"*{training.type}*\n\n"
+    text += f"*{training.type}*\n"
+    max_slots = 1 if training.type == "Персональне тренування" else 3
+    text += f"👥 *Записано:* {len(participants)}/{max_slots}\n\n"
     text += f"👥 *Список учасників:*\n"
     
     if participants:
@@ -280,8 +282,7 @@ async def show_training_details(update: Update, context: ContextTypes.DEFAULT_TY
         keyboard.append([InlineKeyboardButton("✅ Записатися", callback_data=f"register_{training_id}")])
     
     keyboard.append([InlineKeyboardButton("🔄 Оновити", callback_data=f"client_training_{training_id}")])
-    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data=f"client_day_{training.date.strftime('%Y-%m-%d')}")]
-    )
+    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data=f"client_day_{training.date.strftime('%Y-%m-%d')}")])
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
@@ -302,13 +303,14 @@ async def handle_register_for_training(update: Update, context: ContextTypes.DEF
     if training_time <= current_time:
         await query.edit_message_text(
             "❌ *На жаль, запис на це тренування вже закрито.*\n"
-            "Тренування вже почалося.",
+            "Тренування вже почалося або закінчилось.",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="client_menu")]]),
             parse_mode='Markdown'
         )
         return
     
-    if user.paid_trainings <= 0:
+    # Перевіряємо чи є оплачені тренування тільки для групових тренувань
+    if training.type != "Персональне тренування" and user.paid_trainings <= 0:
         await query.edit_message_text(
             "❌ *У вас немає оплачених тренувань.*\n"
             "Зверніться до [@yurivynnyk](https://t.me/yurivynnyk) для поповнення.",
@@ -327,13 +329,22 @@ async def handle_register_for_training(update: Update, context: ContextTypes.DEF
         )
         return
     
+    # Перевіряємо чи є вільні місця
+    participants = get_training_participants(training_id)
+    max_slots = 1 if training.type == "Персональне тренування" else 3
+    if len(participants) >= max_slots:
+        await query.edit_message_text(
+            "❌ *На жаль, всі місця на це тренування вже зайняті.*",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data=f"client_day_{training.date.strftime('%Y-%m-%d')}")]]),
+            parse_mode='Markdown'
+        )
+        return
+    
     # Викликаємо функцію з database.py
-    registration = register_for_training(telegram_id, training_id)
+    registration = register_for_training(user.id, training_id)
     if registration:
-        user.paid_trainings -= 1
-        update_user_paid_trainings(user.id, -1)
-        
         # Отримуємо оновлені дані
+        user = get_user_by_telegram_id(telegram_id)  # Оновлюємо дані користувача
         training = get_training_by_id(training_id)
         participants = get_training_participants(training_id)
         
@@ -349,7 +360,8 @@ async def handle_register_for_training(update: Update, context: ContextTypes.DEF
         }[weekday]
         
         text = f"✅ *Ви успішно записалися на тренування!*\n\n"
-        text += f"💰 *Залишок тренувань:* {user.paid_trainings}\n\n"
+        if training.type != "Персональне тренування":
+            text += f"💰 *Залишок тренувань:* {user.paid_trainings}\n\n"
         text += f"🏋️‍♂️ *Тренування*\n\n"
         text += f"📅 *{format_date(training.date)}*\n"
         text += f"*{weekday_ua}*\n"
@@ -419,6 +431,7 @@ async def cancel_registration(update: Update, context: ContextTypes.DEFAULT_TYPE
         # Отримуємо оновлені дані
         training = get_training_by_id(training_id)
         participants = get_training_participants(training_id)
+        user = get_user_by_telegram_id(update.effective_user.id)  # Оновлюємо дані користувача
         
         weekday = training.date.strftime('%A')
         weekday_ua = {
@@ -561,11 +574,11 @@ async def show_register_menu(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return
     
-    # Формуємо текст розкладу
-    text = f"📝 *Оберіть тренування для запису:*\n\n"
+    # Формуємо текст меню
+    text = f"📝 *Оберіть день для запису:*\n\n"
     text += f"💰 *Залишок тренувань:* {user.paid_trainings}\n\n"
-    keyboard = []
     
+    keyboard = []
     for date, trainings in sorted(trainings_by_day.items()):
         weekday = date.strftime('%A')
         weekday_ua = {
@@ -578,19 +591,9 @@ async def show_register_menu(update: Update, context: ContextTypes.DEFAULT_TYPE)
             'Sunday': 'Неділя'
         }[weekday]
         
-        text += f"📅 *{format_date(date)}*\n"
-        text += f"*{weekday_ua}*\n"
-        for training in sorted(trainings, key=lambda x: x.time):
-            participants = get_training_participants(training.id)
-            is_registered = any(reg.user_id == user.id for reg in participants)
-            checkmark = "✅ " if is_registered else ""
-            text += f"  {checkmark}{training.time} - {training.type} ({len(participants)} записів)\n"
-        text += "\n"
-        
-        # Додаємо кнопку для перегляду тренувань цього дня
         keyboard.append([
             InlineKeyboardButton(
-                f"📅 {format_date(date)}",
+                f"📅 {date.strftime('%d.%m.%Y')} ({weekday_ua})",
                 callback_data=f"client_day_{date.strftime('%Y-%m-%d')}"
             )
         ])
@@ -605,7 +608,7 @@ async def show_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     
     user = get_user_by_telegram_id(update.effective_user.id)
-    
+
     text = f"👤 *Профіль*\n\n"
     text += f"*Ім'я:* {user.display_name}\n"
     
@@ -727,7 +730,7 @@ async def handle_name_change(update: Update, context: ContextTypes.DEFAULT_TYPE)
     except Exception as e:
         print(f"ERROR in handle_name_change: {e}")
         print(f"ERROR traceback: {traceback.format_exc()}")
-        await update.message.reply_text("❌ Помилка при зміні імені. Спробуйте ще раз.")
+        await update.message.reply_text("❌ Помилка при зміні імені. Спробуйте ще раз.") 
 
 async def handle_buy_trainings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -859,7 +862,7 @@ async def handle_admin_add_trainings(update: Update, context: ContextTypes.DEFAU
         
     # Получаем обновленные данные пользователя
     user = get_user_by_id(int(user_id))
-    training_type = "персональне тренування" if action == "personal" else f"{amount} тренувань"
+    training_type = "персональное тренування" if action == "personal" else f"{amount} тренувань"
     await query.edit_message_text(
         f"✅ Добавлено {training_type} пользователю {user.display_name}\n"
         f"📅 Действует до: {user.expires_at.strftime('%d.%m.%Y')}",

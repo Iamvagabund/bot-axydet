@@ -50,10 +50,12 @@ application.add_error_handler(error_handler)
 # Адмін-меню
 application.add_handler(CommandHandler("admin", admin_handlers.admin_menu))
 application.add_handler(CallbackQueryHandler(admin_handlers.admin_menu, pattern="^admin_menu$"))
-application.add_handler(CallbackQueryHandler(admin_handlers.show_schedule, pattern="^admin_schedule$"))
+application.add_handler(CallbackQueryHandler(admin_handlers.show_admin_schedule, pattern="^admin_schedule$"))
+application.add_handler(CallbackQueryHandler(admin_handlers.show_day_schedule, pattern="^admin_day_"))
 application.add_handler(CallbackQueryHandler(admin_handlers.add_training_menu, pattern="^admin_add_training$"))
 application.add_handler(CallbackQueryHandler(admin_handlers.edit_training_menu, pattern="^admin_edit_training$"))
 application.add_handler(CallbackQueryHandler(admin_handlers.show_users, pattern="^admin_users$"))
+application.add_handler(CallbackQueryHandler(admin_handlers.show_tomorrow_trainings, pattern="^admin_tomorrow$"))
 
 # Управление пользователями
 application.add_handler(CallbackQueryHandler(admin_handlers.user_management, pattern="^user_management_"))
@@ -68,7 +70,7 @@ application.add_handler(CallbackQueryHandler(admin_handlers.add_training_type, p
 application.add_handler(CallbackQueryHandler(admin_handlers.save_training, pattern="^add_type_"))
 
 # Перегляд і редагування тренувань
-application.add_handler(CallbackQueryHandler(admin_handlers.view_existing_training, pattern="^view_training_"))
+application.add_handler(CallbackQueryHandler(admin_handlers.view_existing_training, pattern="^view_existing_"))
 application.add_handler(CallbackQueryHandler(admin_handlers.view_day_trainings, pattern="^view_trainings_"))
 application.add_handler(CallbackQueryHandler(admin_handlers.edit_existing_training, pattern="^edit_existing_training_"))
 application.add_handler(CallbackQueryHandler(admin_handlers.change_training_type, pattern="^change_type_"))
@@ -82,6 +84,7 @@ application.add_handler(CallbackQueryHandler(admin_handlers.delete_training, pat
 application.add_handler(CommandHandler("start", client_handlers.start))
 application.add_handler(CallbackQueryHandler(client_handlers.show_client_menu, pattern="^client_menu$"))
 application.add_handler(CallbackQueryHandler(client_handlers.show_schedule, pattern="^client_schedule$"))
+application.add_handler(CallbackQueryHandler(client_handlers.show_day_trainings, pattern="^client_day_"))
 application.add_handler(CallbackQueryHandler(client_handlers.show_register_menu, pattern="^client_register$"))
 application.add_handler(CallbackQueryHandler(client_handlers.show_my_trainings, pattern="^client_cancel$"))
 application.add_handler(CallbackQueryHandler(client_handlers.handle_register_for_training, pattern="^register_"))
